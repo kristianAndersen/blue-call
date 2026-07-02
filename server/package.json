@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@atproto/identity": "^0.5.3",
-    "@atproto/xrpc-server": "^0.11.6"
+    "@atproto/xrpc-server": "^0.11.6",
+    "@blue-call/shared": "workspace:*"
   }
 }

@@ -6,4 +6,5 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
 });

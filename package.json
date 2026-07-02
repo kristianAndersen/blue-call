@@ -4,6 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "workspaces": ["shared", "server", "client"],
+  "scripts": {
+    "dev": "bun run --filter '@blue-call/server' --filter '@blue-call/client' dev",
+    "test": "bun test shared server && cd client && bun run vitest run"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.6.0",
