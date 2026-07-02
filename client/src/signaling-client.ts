@@ -20,6 +20,7 @@ export class SignalingClient {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disconnected = false;
+  private sendQueue: SignalingMessage[] = [];
 
   constructor(options: SignalingClientOptions) {
     this.options = options;
@@ -49,6 +50,15 @@ export class SignalingClient {
     this.reconnectAttempt = 0;
     const frame: AuthHandshake = { type: 'auth-handshake', did: this.options.did, token };
     ws.send(JSON.stringify(frame));
+    this.flushQueue(ws);
+  }
+
+  private flushQueue(ws: WebSocket): void {
+    const pending = this.sendQueue;
+    this.sendQueue = [];
+    for (const message of pending) {
+      ws.send(JSON.stringify(message));
+    }
   }
 
   private scheduleReconnect(): void {
@@ -92,7 +102,12 @@ export class SignalingClient {
   }
 
   send(message: SignalingMessage): void {
-    this.ws?.send(JSON.stringify(message));
+    if (this.disconnected) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.sendQueue.push(message);
+      return;
+    }
+    this.ws.send(JSON.stringify(message));
   }
 
   disconnect(): void {

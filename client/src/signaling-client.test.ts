@@ -422,6 +422,63 @@ describe('clean disconnect', () => {
   });
 });
 
+describe('send queueing before handshake', () => {
+  it('queues a send() made before the socket opens, flushing it after the auth-handshake', async () => {
+    const { client } = makeClient();
+    client.connect();
+    const ws = lastSocket();
+    client.send(JoinRequest.parse({ type: 'join-request', to: 'did:plc:bob' }));
+    expect(ws.sent).toHaveLength(0);
+    ws.open();
+    await flush();
+    expect(ws.sent).toHaveLength(2);
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ type: 'auth-handshake' });
+    expect(JSON.parse(ws.sent[1])).toMatchObject({ type: 'join-request', to: 'did:plc:bob' });
+  });
+
+  it('preserves order across multiple messages queued before open', async () => {
+    const { client } = makeClient();
+    client.connect();
+    const ws = lastSocket();
+    client.send(JoinRequest.parse({ type: 'join-request', to: 'did:plc:bob' }));
+    client.send(SdpOffer.parse({ type: 'sdp-offer', to: 'did:plc:bob', sdp: 'v=0 offer' }));
+    client.send(
+      IceCandidate.parse({
+        type: 'ice-candidate',
+        to: 'did:plc:bob',
+        candidate: { candidate: 'candidate:1 1 udp 2122260223 192.168.1.2 50000 typ host', sdpMid: '0' },
+      }),
+    );
+    expect(ws.sent).toHaveLength(0);
+    ws.open();
+    await flush();
+    const frames = ws.sent.map((raw) => JSON.parse(raw));
+    expect(frames[0]).toMatchObject({ type: 'auth-handshake' });
+    expect(frames.slice(1).map((f) => f.type)).toEqual(['join-request', 'sdp-offer', 'ice-candidate']);
+  });
+
+  it('flushes messages queued while reconnecting after the new handshake, in order', async () => {
+    vi.useFakeTimers();
+    const { client } = makeClient();
+    client.connect();
+    lastSocket().open();
+    await vi.advanceTimersByTimeAsync(0);
+
+    lastSocket().fail();
+    client.send(JoinRequest.parse({ type: 'join-request', to: 'did:plc:bob' }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(instances()).toHaveLength(2);
+
+    const second = lastSocket();
+    expect(second.sent).toHaveLength(0);
+    second.open();
+    await vi.advanceTimersByTimeAsync(0);
+    const frames = second.sent.map((raw) => JSON.parse(raw));
+    expect(frames[0]).toMatchObject({ type: 'auth-handshake' });
+    expect(frames[1]).toMatchObject({ type: 'join-request', to: 'did:plc:bob' });
+  });
+});
+
 describe('integration: full signaling lifecycle', () => {
   it('handshakes, exchanges presence and call-setup frames, then disconnects cleanly', async () => {
     const { client } = makeClient();
