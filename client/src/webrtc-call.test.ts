@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IceCandidate, SdpAnswer, SdpOffer } from '@blue-call/shared';
 import { WebRTCCall } from './webrtc-call';
 
 /**
@@ -31,9 +32,10 @@ import { WebRTCCall } from './webrtc-call';
  * stopped, peer connection closed, signaling listeners removed).
  *
  * Signaling frames use the pinned protocol names from @blue-call/shared
- * (shared/src/protocol.ts): SdpOffer, SdpAnswer, IceCandidate — each carrying
- * from/to DIDs. Inbound IceCandidate frames that arrive before the remote
- * description has been applied must be buffered and added afterwards.
+ * (shared/src/protocol.ts): sdp-offer, sdp-answer, ice-candidate — each
+ * carrying to (and, where the schema allows it, from) DIDs. Inbound
+ * ice-candidate frames that arrive before the remote description has been
+ * applied must be buffered and added afterwards.
  */
 
 const STUN_URLS = ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'];
@@ -213,33 +215,33 @@ const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const flatIceUrls = (config: RTCConfiguration | undefined): string[] =>
   (config?.iceServers ?? []).flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]));
 
-const answerFrame = {
-  type: 'SdpAnswer',
-  from: 'did:plc:bob',
+const answerFrame = SdpAnswer.parse({
+  type: 'sdp-answer',
   to: 'did:plc:alice',
   sdp: 'v=0 remote-answer',
-};
+});
 
-const offerFrame = {
-  type: 'SdpOffer',
+const offerFrame = SdpOffer.parse({
+  type: 'sdp-offer',
   from: 'did:plc:bob',
   to: 'did:plc:alice',
   sdp: 'v=0 remote-offer',
-};
+});
 
-const inboundIceFrame = {
-  type: 'IceCandidate',
-  from: 'did:plc:bob',
+const inboundIceFrame = IceCandidate.parse({
+  type: 'ice-candidate',
   to: 'did:plc:alice',
   candidate: {
     candidate: 'candidate:2 1 udp 1686052607 203.0.113.5 61000 typ srflx',
     sdpMid: '0',
     sdpMLineIndex: 0,
   },
-};
+});
 
 interface MakeCallOverrides {
   connectionTimeoutMs?: number;
+  onLocalStream?: (stream: MediaStream) => void;
+  onRemoteStream?: (stream: MediaStream) => void;
 }
 
 function makeCall(overrides: MakeCallOverrides = {}) {
@@ -325,7 +327,7 @@ describe('caller offer flow', () => {
     );
     expect(signaling.sent).toContainEqual(
       expect.objectContaining({
-        type: 'SdpOffer',
+        type: 'sdp-offer',
         from: 'did:plc:alice',
         to: 'did:plc:bob',
         sdp: 'v=0 mock-offer',
@@ -343,7 +345,7 @@ describe('caller offer flow', () => {
   it('applies an inbound SdpAnswer as the remote description', async () => {
     const { call, signaling } = makeCall();
     await call.placeCall();
-    signaling.emit('SdpAnswer', answerFrame);
+    signaling.emit('sdp-answer', answerFrame);
     await flush();
     expect(lastPc().setRemoteDescription).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'answer', sdp: 'v=0 remote-answer' }),
@@ -372,7 +374,7 @@ describe('callee answer flow', () => {
     );
     expect(signaling.sent).toContainEqual(
       expect.objectContaining({
-        type: 'SdpAnswer',
+        type: 'sdp-answer',
         from: 'did:plc:alice',
         to: 'did:plc:bob',
         sdp: 'v=0 mock-answer',
@@ -397,7 +399,7 @@ describe('ICE candidate exchange', () => {
       sdpMLineIndex: 0,
     });
     await flush();
-    const iceFrames = signaling.sent.filter((f) => f.type === 'IceCandidate');
+    const iceFrames = signaling.sent.filter((f) => f.type === 'ice-candidate');
     expect(iceFrames).toHaveLength(1);
     expect(iceFrames[0]).toMatchObject({ from: 'did:plc:alice', to: 'did:plc:bob' });
     expect(iceFrames[0].candidate).toMatchObject({
@@ -410,15 +412,15 @@ describe('ICE candidate exchange', () => {
     await call.placeCall();
     lastPc().emitIceCandidate(null);
     await flush();
-    expect(signaling.sent.filter((f) => f.type === 'IceCandidate')).toHaveLength(0);
+    expect(signaling.sent.filter((f) => f.type === 'ice-candidate')).toHaveLength(0);
   });
 
   it('adds inbound candidates to the peer connection once the answer is applied', async () => {
     const { call, signaling } = makeCall();
     await call.placeCall();
-    signaling.emit('SdpAnswer', answerFrame);
+    signaling.emit('sdp-answer', answerFrame);
     await flush();
-    signaling.emit('IceCandidate', inboundIceFrame);
+    signaling.emit('ice-candidate', inboundIceFrame);
     await flush();
     expect(lastPc().addIceCandidate).toHaveBeenCalledTimes(1);
     expect(lastPc().addIceCandidate).toHaveBeenCalledWith(
@@ -429,10 +431,10 @@ describe('ICE candidate exchange', () => {
   it('buffers inbound candidates that arrive before the remote answer', async () => {
     const { call, signaling } = makeCall();
     await call.placeCall();
-    signaling.emit('IceCandidate', inboundIceFrame);
+    signaling.emit('ice-candidate', inboundIceFrame);
     await flush();
     expect(lastPc().addIceCandidate).not.toHaveBeenCalled();
-    signaling.emit('SdpAnswer', answerFrame);
+    signaling.emit('sdp-answer', answerFrame);
     await flush();
     expect(lastPc().addIceCandidate).toHaveBeenCalledWith(
       expect.objectContaining({ candidate: inboundIceFrame.candidate.candidate }),
@@ -505,6 +507,24 @@ describe('media streams', () => {
     expect(call.remoteStream).not.toBeNull();
     expect(call.remoteStream!.getTracks()).toContain(remoteTrack);
   });
+
+  it('fires onLocalStream when getUserMedia resolves', async () => {
+    const onLocalStream = vi.fn();
+    const { call } = makeCall({ onLocalStream });
+    await call.placeCall();
+    expect(onLocalStream).toHaveBeenCalledWith(localStream);
+  });
+
+  it('fires onRemoteStream when a remote track arrives', async () => {
+    const onRemoteStream = vi.fn();
+    const { call } = makeCall({ onRemoteStream });
+    await call.placeCall();
+    const remoteTrack = new MockMediaStreamTrack('video');
+    const stream = new MockMediaStream([remoteTrack]);
+    lastPc().emitTrack(remoteTrack, stream);
+    await flush();
+    expect(onRemoteStream).toHaveBeenCalledWith(stream);
+  });
 });
 
 describe('teardown', () => {
@@ -540,14 +560,14 @@ describe('integration: full caller lifecycle', () => {
 
     // 1. offer went out over the injected signaling channel
     expect(signaling.sent).toContainEqual(
-      expect.objectContaining({ type: 'SdpOffer', from: 'did:plc:alice', to: 'did:plc:bob' }),
+      expect.objectContaining({ type: 'sdp-offer', from: 'did:plc:alice', to: 'did:plc:bob' }),
     );
     expect(call.state).toBe('connecting');
 
     // 2. answer + remote candidate flow back in
-    signaling.emit('SdpAnswer', answerFrame);
+    signaling.emit('sdp-answer', answerFrame);
     await flush();
-    signaling.emit('IceCandidate', inboundIceFrame);
+    signaling.emit('ice-candidate', inboundIceFrame);
     await flush();
     expect(pc.setRemoteDescription).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'answer', sdp: 'v=0 remote-answer' }),
@@ -562,7 +582,7 @@ describe('integration: full caller lifecycle', () => {
     });
     await flush();
     expect(signaling.sent).toContainEqual(
-      expect.objectContaining({ type: 'IceCandidate', to: 'did:plc:bob' }),
+      expect.objectContaining({ type: 'ice-candidate', to: 'did:plc:bob' }),
     );
 
     // 4. ICE connects; remote media arrives

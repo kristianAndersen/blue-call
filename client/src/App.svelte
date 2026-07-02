@@ -3,7 +3,7 @@
   import { login, handleCallback, getSession, type Session } from './auth';
   import { fetchMutuals } from './mutuals';
   import { SignalingClient } from './signaling-client';
-  import { WebRTCCall, type CallState } from './webrtc-call';
+  import { WebRTCCall, type CallState, type FailureReason } from './webrtc-call';
   import { createPresenceStore } from './presence-store';
   import { createMutualsPresence } from './mutuals-presence';
   import PresenceToggle from './components/PresenceToggle.svelte';
@@ -21,6 +21,10 @@
   let presenceStore: ReturnType<typeof createPresenceStore> | undefined = $state(undefined);
   let mutualsPresence: ReturnType<typeof createMutualsPresence> | undefined = $state(undefined);
   let activeCall: WebRTCCall | undefined = $state(undefined);
+  let callState: CallState = $state('connecting');
+  let callFailureReason: FailureReason = $state(null);
+  let callLocalStream: MediaStream | null = $state(null);
+  let callRemoteStream: MediaStream | null = $state(null);
 
   let signaling: SignalingClient | undefined;
 
@@ -51,15 +55,27 @@
 
   function handleJoin(peerDid: string): void {
     if (!session || !signaling) return;
+    callState = 'connecting';
+    callFailureReason = null;
+    callLocalStream = null;
+    callRemoteStream = null;
     const call = new WebRTCCall({
       signaling,
       selfDid: session.did,
       peerDid,
       connectionTimeoutMs: CONNECTION_TIMEOUT_MS,
       onStateChange: (state: CallState) => {
+        callState = state;
+        if (state === 'failed') callFailureReason = call.failureReason;
         if (state === 'ended' || state === 'failed') {
           activeCall = undefined;
         }
+      },
+      onLocalStream: (stream) => {
+        callLocalStream = stream;
+      },
+      onRemoteStream: (stream) => {
+        callRemoteStream = stream;
       },
     });
     activeCall = call;
@@ -101,7 +117,13 @@
       <button type="submit">Log in</button>
     </form>
   {:else if activeCall}
-    <CallView call={activeCall} />
+    <CallView
+      callState={callState}
+      failureReason={callFailureReason}
+      localStream={callLocalStream}
+      remoteStream={callRemoteStream}
+      onHangUp={() => activeCall?.hangUp()}
+    />
   {:else}
     {#if presenceStore}
       <PresenceToggle store={presenceStore} />

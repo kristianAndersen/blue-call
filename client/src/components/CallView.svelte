@@ -1,35 +1,35 @@
 <script lang="ts">
   import type { CallState, FailureReason } from '../webrtc-call';
 
-  interface CallLike {
-    state: CallState;
+  interface CallViewProps {
+    callState: CallState;
     failureReason: FailureReason;
     localStream: MediaStream | null;
     remoteStream: MediaStream | null;
-    hangUp(): void;
+    onHangUp(): void;
   }
 
-  let { call }: { call: CallLike } = $props();
+  let { callState, failureReason, localStream, remoteStream, onHangUp }: CallViewProps = $props();
 
   let localVideo: HTMLVideoElement | undefined = $state();
   let remoteVideo: HTMLVideoElement | undefined = $state();
 
   $effect(() => {
-    if (localVideo) localVideo.srcObject = call.localStream;
+    if (localVideo) localVideo.srcObject = localStream;
   });
 
   $effect(() => {
-    if (remoteVideo) remoteVideo.srcObject = call.remoteStream;
+    if (remoteVideo) remoteVideo.srcObject = remoteStream;
   });
 </script>
 
 <div>
-  {#if call.state === 'connecting'}
+  {#if callState === 'connecting'}
     <p>Connecting…</p>
   {/if}
 
-  {#if call.state === 'failed'}
-    <p>Could not connect</p>
+  {#if callState === 'failed'}
+    <p>Could not connect{#if failureReason} ({failureReason}){/if}</p>
   {/if}
 
   <video bind:this={localVideo} autoplay muted playsinline>
@@ -39,7 +39,7 @@
     <track kind="captions" />
   </video>
 
-  {#if call.state === 'connecting' || call.state === 'connected'}
-    <button type="button" onclick={() => call.hangUp()}>Hang up</button>
+  {#if callState === 'connecting' || callState === 'connected'}
+    <button type="button" onclick={() => onHangUp()}>Hang up</button>
   {/if}
 </div>

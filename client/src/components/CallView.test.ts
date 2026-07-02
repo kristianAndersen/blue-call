@@ -4,12 +4,12 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import type { CallState, FailureReason } from '../webrtc-call';
 import CallView from './CallView.svelte';
 
-// Contract (pinned by webrtc-call.test.ts / U30): the component receives a
-// WebRTCCall-shaped object as a `call` prop and renders purely from its public
-// surface: `state`, `failureReason`, `localStream`, `remoteStream`, `hangUp()`.
-// The call is mocked here so these tests exercise only CallView's rendering
-// and its calls into `hangUp()`. State transitions are driven by re-rendering
-// with a call snapshot in the next state.
+// Contract (pinned by webrtc-call.test.ts / U30, updated for the Svelte 5
+// reactivity fix): the component receives plain reactive props —
+// `callState`, `failureReason`, `localStream`, `remoteStream`, `onHangUp` —
+// and renders purely from those props so a parent's `$state` reassignment of
+// a stream re-runs the `$effect` bindings. State transitions are driven by
+// re-rendering with the next prop snapshot.
 
 // jsdom has no MediaStream; a minimal stand-in is enough because the component
 // only assigns streams to <video>.srcObject and never inspects tracks itself.
@@ -20,29 +20,29 @@ class FakeMediaStream {
   }
 }
 
-interface MockCall {
-  state: CallState;
+interface MockCallViewProps {
+  callState: CallState;
   failureReason: FailureReason;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
-  hangUp: ReturnType<typeof vi.fn>;
+  onHangUp: () => void;
 }
 
-function createMockCall(overrides: Partial<MockCall> = {}): MockCall {
+function createMockProps(overrides: Partial<MockCallViewProps> = {}): MockCallViewProps {
   return {
-    state: 'connected',
+    callState: 'connected',
     failureReason: null,
     localStream: new FakeMediaStream() as unknown as MediaStream,
     remoteStream: new FakeMediaStream() as unknown as MediaStream,
-    hangUp: vi.fn(),
+    onHangUp: vi.fn(),
     ...overrides,
   };
 }
 
-function renderCallView(overrides: Partial<MockCall> = {}) {
-  const call = createMockCall(overrides);
-  const rendered = render(CallView, { props: { call } });
-  return { call, ...rendered };
+function renderCallView(overrides: Partial<MockCallViewProps> = {}) {
+  const props = createMockProps(overrides);
+  const rendered = render(CallView, { props });
+  return { props, ...rendered };
 }
 
 // Accessible-name matchers pin behavior, not copy: any reasonable label works.
@@ -75,18 +75,18 @@ afterEach(() => {
 
 describe('video wiring', () => {
   test('connected call renders local and remote video elements bound to the MediaStreams', () => {
-    const { call, container } = renderCallView({ state: 'connected' });
+    const { props, container } = renderCallView({ callState: 'connected' });
     const srcObjects = videoSrcObjects(container);
     expect(srcObjects.length).toBeGreaterThanOrEqual(2);
-    expect(srcObjects).toContain(call.localStream);
-    expect(srcObjects).toContain(call.remoteStream);
+    expect(srcObjects).toContain(props.localStream);
+    expect(srcObjects).toContain(props.remoteStream);
   });
 
   test('local and remote streams land on distinct video elements', () => {
-    const { call, container } = renderCallView({ state: 'connected' });
+    const { props, container } = renderCallView({ callState: 'connected' });
     const srcObjects = videoSrcObjects(container);
-    const localIndex = srcObjects.indexOf(call.localStream);
-    const remoteIndex = srcObjects.indexOf(call.remoteStream);
+    const localIndex = srcObjects.indexOf(props.localStream);
+    const remoteIndex = srcObjects.indexOf(props.remoteStream);
     expect(localIndex).toBeGreaterThanOrEqual(0);
     expect(remoteIndex).toBeGreaterThanOrEqual(0);
     expect(localIndex).not.toBe(remoteIndex);
@@ -95,47 +95,47 @@ describe('video wiring', () => {
 
 describe('connecting state', () => {
   test('shows a connecting indicator', () => {
-    const { container } = renderCallView({ state: 'connecting', remoteStream: null });
+    const { container } = renderCallView({ callState: 'connecting', remoteStream: null });
     expect(container.textContent ?? '').toMatch(CONNECTING_TEXT);
   });
 
   test('offers a control to abort the call attempt', () => {
-    renderCallView({ state: 'connecting', remoteStream: null });
+    renderCallView({ callState: 'connecting', remoteStream: null });
     expect(getHangupControl()).toBeTruthy();
   });
 
-  test('does not show the failure message or call hangUp on mere render', () => {
-    const { call, container } = renderCallView({ state: 'connecting', remoteStream: null });
+  test('does not show the failure message or call onHangUp on mere render', () => {
+    const { props, container } = renderCallView({ callState: 'connecting', remoteStream: null });
     expect(container.textContent ?? '').not.toMatch(FAILED_TEXT);
-    expect(call.hangUp).not.toHaveBeenCalled();
+    expect(props.onHangUp).not.toHaveBeenCalled();
   });
 });
 
 describe('connected state', () => {
   test('no longer shows the connecting indicator', () => {
-    const { container } = renderCallView({ state: 'connected' });
+    const { container } = renderCallView({ callState: 'connected' });
     expect(container.textContent ?? '').not.toMatch(CONNECTING_TEXT);
   });
 
-  test('shows a hangup control and does not call hangUp on mere render', () => {
-    const { call } = renderCallView({ state: 'connected' });
+  test('shows a hangup control and does not call onHangUp on mere render', () => {
+    const { props } = renderCallView({ callState: 'connected' });
     expect(getHangupControl()).toBeTruthy();
-    expect(call.hangUp).not.toHaveBeenCalled();
+    expect(props.onHangUp).not.toHaveBeenCalled();
   });
 });
 
 describe('hangup control', () => {
-  test('clicking hangup calls call.hangUp() exactly once', async () => {
-    const { call } = renderCallView({ state: 'connected' });
+  test('clicking hangup calls onHangUp exactly once', async () => {
+    const { props } = renderCallView({ callState: 'connected' });
     await fireEvent.click(getHangupControl());
-    expect(call.hangUp).toHaveBeenCalledTimes(1);
+    expect(props.onHangUp).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('failed state', () => {
   test('renders a could-not-connect message', () => {
     const { container } = renderCallView({
-      state: 'failed',
+      callState: 'failed',
       failureReason: 'could-not-connect',
       localStream: null,
       remoteStream: null,
@@ -145,7 +145,7 @@ describe('failed state', () => {
 
   test('offers no TURN retry control', () => {
     renderCallView({
-      state: 'failed',
+      callState: 'failed',
       failureReason: 'could-not-connect',
       localStream: null,
       remoteStream: null,
@@ -155,7 +155,7 @@ describe('failed state', () => {
 
   test('does not show the connecting indicator', () => {
     const { container } = renderCallView({
-      state: 'failed',
+      callState: 'failed',
       failureReason: 'could-not-connect',
       localStream: null,
       remoteStream: null,
@@ -165,15 +165,15 @@ describe('failed state', () => {
 });
 
 describe('no missed-call badge in any state', () => {
-  const states: Array<Partial<MockCall>> = [
-    { state: 'connecting', remoteStream: null },
-    { state: 'connected' },
-    { state: 'failed', failureReason: 'could-not-connect', localStream: null, remoteStream: null },
-    { state: 'ended', localStream: null, remoteStream: null },
+  const states: Array<Partial<MockCallViewProps>> = [
+    { callState: 'connecting', remoteStream: null },
+    { callState: 'connected' },
+    { callState: 'failed', failureReason: 'could-not-connect', localStream: null, remoteStream: null },
+    { callState: 'ended', localStream: null, remoteStream: null },
   ];
 
   for (const overrides of states) {
-    test(`state "${overrides.state}" renders no missed-call badge`, () => {
+    test(`state "${overrides.callState}" renders no missed-call badge`, () => {
       const { container } = renderCallView(overrides);
       expectNoMissedCallBadge(container);
     });
@@ -182,29 +182,26 @@ describe('no missed-call badge in any state', () => {
 
 describe('full lifecycle integration', () => {
   test('connecting -> connected -> hangup, with no missed indicator at any point', async () => {
-    const call = createMockCall({ state: 'connecting', remoteStream: null });
-    const { container, rerender } = render(CallView, { props: { call } });
+    const onHangUp = vi.fn();
+    const localStream = new FakeMediaStream() as unknown as MediaStream;
+    const props = createMockProps({ callState: 'connecting', remoteStream: null, localStream, onHangUp });
+    const { container, rerender } = render(CallView, { props });
 
     // connecting
     expect(container.textContent ?? '').toMatch(CONNECTING_TEXT);
     expectNoMissedCallBadge(container);
 
-    // connected (new snapshot of the same call after ICE succeeds)
-    const connected = createMockCall({
-      state: 'connected',
-      localStream: call.localStream,
-      remoteStream: new FakeMediaStream() as unknown as MediaStream,
-      hangUp: call.hangUp,
-    });
-    await rerender({ call: connected });
+    // connected (new prop snapshot after ICE succeeds)
+    const remoteStream = new FakeMediaStream() as unknown as MediaStream;
+    await rerender({ callState: 'connected', failureReason: null, localStream, remoteStream, onHangUp });
     expect(container.textContent ?? '').not.toMatch(CONNECTING_TEXT);
     const srcObjects = videoSrcObjects(container);
-    expect(srcObjects).toContain(connected.localStream);
-    expect(srcObjects).toContain(connected.remoteStream);
+    expect(srcObjects).toContain(localStream);
+    expect(srcObjects).toContain(remoteStream);
     expectNoMissedCallBadge(container);
 
     // hangup tears down the call
     await fireEvent.click(getHangupControl());
-    expect(connected.hangUp).toHaveBeenCalledTimes(1);
+    expect(onHangUp).toHaveBeenCalledTimes(1);
   });
 });

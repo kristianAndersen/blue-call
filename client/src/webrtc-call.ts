@@ -1,3 +1,5 @@
+import type { IceCandidate, SdpAnswer, SdpOffer } from '@blue-call/shared';
+
 export type CallState = 'connecting' | 'connected' | 'ended' | 'failed';
 export type FailureReason = 'could-not-connect' | null;
 
@@ -7,32 +9,10 @@ export interface SignalingChannel {
   off(type: string, fn: (msg: unknown) => void): void;
 }
 
-export interface IceCandidateInit {
-  candidate: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
-}
-
-export interface SdpOfferFrame {
-  type: string;
-  from: string;
-  to: string;
-  sdp: string;
-}
-
-export interface SdpAnswerFrame {
-  type: 'SdpAnswer';
-  from: string;
-  to: string;
-  sdp: string;
-}
-
-export interface IceCandidateFrame {
-  type: 'IceCandidate';
-  from: string;
-  to: string;
-  candidate: IceCandidateInit;
-}
+export type SdpOfferFrame = SdpOffer;
+export type SdpAnswerFrame = SdpAnswer;
+export type IceCandidateFrame = IceCandidate;
+export type IceCandidateInit = IceCandidateFrame['candidate'];
 
 export interface WebRTCCallOptions {
   signaling: SignalingChannel;
@@ -40,6 +20,8 @@ export interface WebRTCCallOptions {
   peerDid: string;
   connectionTimeoutMs: number;
   onStateChange?: (state: CallState) => void;
+  onLocalStream?: (stream: MediaStream) => void;
+  onRemoteStream?: (stream: MediaStream) => void;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -73,7 +55,7 @@ export class WebRTCCall {
     const offer = await this.pc!.createOffer();
     await this.pc!.setLocalDescription(offer);
     this.options.signaling.send({
-      type: 'SdpOffer',
+      type: 'sdp-offer',
       from: this.options.selfDid,
       to: this.options.peerDid,
       sdp: offer.sdp,
@@ -94,7 +76,7 @@ export class WebRTCCall {
     const answer = await this.pc!.createAnswer();
     await this.pc!.setLocalDescription(answer);
     this.options.signaling.send({
-      type: 'SdpAnswer',
+      type: 'sdp-answer',
       from: this.options.selfDid,
       to: this.options.peerDid,
       sdp: answer.sdp,
@@ -115,6 +97,7 @@ export class WebRTCCall {
 
   private async setupLocalMedia(): Promise<void> {
     this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    this.options.onLocalStream?.(this.localStream);
   }
 
   private setupPeerConnection(): void {
@@ -129,7 +112,7 @@ export class WebRTCCall {
       if (!ev.candidate) return;
       const candidate = ev.candidate.toJSON();
       this.options.signaling.send({
-        type: 'IceCandidate',
+        type: 'ice-candidate',
         from: this.options.selfDid,
         to: this.options.peerDid,
         candidate,
@@ -138,6 +121,7 @@ export class WebRTCCall {
 
     pc.ontrack = (ev) => {
       this.remoteStream = ev.streams[0] ?? null;
+      if (this.remoteStream) this.options.onRemoteStream?.(this.remoteStream);
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -163,16 +147,16 @@ export class WebRTCCall {
       }
       void this.pc!.addIceCandidate(new RTCIceCandidate(frame.candidate));
     };
-    this.options.signaling.on('IceCandidate', handler);
-    this.signalingHandlers.push(['IceCandidate', handler]);
+    this.options.signaling.on('ice-candidate', handler);
+    this.signalingHandlers.push(['ice-candidate', handler]);
   }
 
   private listenForAnswer(): void {
     const handler = (msg: unknown) => {
       void this.applyAnswer(msg as SdpAnswerFrame);
     };
-    this.options.signaling.on('SdpAnswer', handler);
-    this.signalingHandlers.push(['SdpAnswer', handler]);
+    this.options.signaling.on('sdp-answer', handler);
+    this.signalingHandlers.push(['sdp-answer', handler]);
   }
 
   private async applyAnswer(frame: SdpAnswerFrame): Promise<void> {
