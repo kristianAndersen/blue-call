@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   ErrorMessage,
   IceCandidate,
@@ -483,6 +483,63 @@ describe('signaling router: structural memorylessness (no content/metadata loggi
         console[m] = originals[i]!;
       });
     }
+  });
+});
+
+describe('signaling router: DEV_ALLOW_UNVERIFIED_AUTH bypass', () => {
+  const ENV_KEY = 'DEV_ALLOW_UNVERIFIED_AUTH';
+  let originalEnv: string | undefined;
+
+  beforeEach(() => {
+    originalEnv = process.env[ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = originalEnv;
+  });
+
+  test('with the env flag set, a handshake whose token verification fails trusts the claimed DID', async () => {
+    process.env[ENV_KEY] = '1';
+    const { router } = makeRouter();
+    const conn = new MockConn();
+    router.handleOpen(conn);
+    await router.handleMessage(
+      conn,
+      JSON.stringify({ type: 'auth-handshake', did: ALICE, token: 'dev-unverified' }),
+    );
+    expect(conn.closed).toBe(false);
+    expect(conn.frames('error')).toHaveLength(0);
+    expect(router.connectionCount()).toBe(1);
+  });
+
+  test('with the env flag set, exactly one console.warn fires at router creation, never per-connection', async () => {
+    process.env[ENV_KEY] = '1';
+    const warnCalls: unknown[][] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => warnCalls.push(args);
+    try {
+      const { router } = makeRouter();
+      await connectAs(router, ALICE);
+      await connectAs(router, BOB);
+    } finally {
+      console.warn = original;
+    }
+    expect(warnCalls).toHaveLength(1);
+    expect(String(warnCalls[0]![0])).toContain('DEV MODE: signaling auth disabled');
+  });
+
+  test('without the env flag, a handshake with a failing token is rejected exactly as before', async () => {
+    delete process.env[ENV_KEY];
+    const { router } = makeRouter();
+    const conn = new MockConn();
+    router.handleOpen(conn);
+    await router.handleMessage(
+      conn,
+      JSON.stringify({ type: 'auth-handshake', did: ALICE, token: 'dev-unverified' }),
+    );
+    expect(conn.closed || conn.frames('error').length > 0).toBe(true);
+    expect(router.connectionCount()).toBe(0);
   });
 });
 

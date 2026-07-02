@@ -250,6 +250,46 @@ describe('getSession()', () => {
   });
 });
 
+describe('mintServiceAuth dev fallback (env-gated bypass while getServiceAuth 403 is root-caused)', () => {
+  it('returns the literal dev-unverified token instead of throwing on a non-ok PDS response when import.meta.env.DEV is true', async () => {
+    primeLoggedIn();
+    const auth = await loadAuth();
+    await auth.handleCallback();
+    const session = await auth.getSession();
+
+    mockSession.fetchHandler.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({}),
+    } as unknown as Response);
+
+    const token = await session!.mintServiceAuth('did:web:signaling.example.com');
+    expect(token).toBe('dev-unverified');
+  });
+
+  it('still throws on a non-ok PDS response when import.meta.env.DEV is false', async () => {
+    vi.stubEnv('DEV', false);
+    try {
+      primeLoggedIn();
+      const auth = await loadAuth();
+      await auth.handleCallback();
+      const session = await auth.getSession();
+
+      mockSession.fetchHandler.mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(
+        (async () => session!.mintServiceAuth('did:web:signaling.example.com'))(),
+      ).rejects.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe('logout()', () => {
   it('revokes or signs out the current session', async () => {
     primeLoggedIn();
