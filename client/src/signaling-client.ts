@@ -1,62 +1,6 @@
-interface AuthHandshakeMessage {
-  type: 'AuthHandshake';
-  did: string;
-  token: string;
-}
+import type { AuthHandshake, SignalingMessage } from '@blue-call/shared';
 
-interface PresenceBroadcastMessage {
-  type: 'PresenceBroadcast';
-  did: string;
-  open: boolean;
-  expiresAt?: number;
-}
-
-interface JoinRequestMessage {
-  type: 'JoinRequest';
-  from: string;
-  to: string;
-}
-
-interface SdpOfferMessage {
-  type: 'SdpOffer';
-  from: string;
-  to: string;
-  sdp: string;
-}
-
-interface SdpAnswerMessage {
-  type: 'SdpAnswer';
-  from: string;
-  to: string;
-  sdp: string;
-}
-
-interface IceCandidateMessage {
-  type: 'IceCandidate';
-  from: string;
-  to: string;
-  candidate: {
-    candidate: string;
-    sdpMid?: string | null;
-    sdpMLineIndex?: number | null;
-  };
-}
-
-interface ErrorMessageMessage {
-  type: 'ErrorMessage';
-  code: string;
-  message: string;
-}
-
-export type SignalingMessage =
-  | AuthHandshakeMessage
-  | PresenceBroadcastMessage
-  | JoinRequestMessage
-  | SdpOfferMessage
-  | SdpAnswerMessage
-  | IceCandidateMessage
-  | ErrorMessageMessage;
-
+export type { SignalingMessage } from '@blue-call/shared';
 export type SignalingMessageType = SignalingMessage['type'];
 
 type HandlerFor<T extends SignalingMessageType> = (msg: Extract<SignalingMessage, { type: T }>) => void;
@@ -103,7 +47,7 @@ export class SignalingClient {
   private async handshake(ws: WebSocket): Promise<void> {
     const token = await this.options.getToken();
     this.reconnectAttempt = 0;
-    const frame: AuthHandshakeMessage = { type: 'AuthHandshake', did: this.options.did, token };
+    const frame: AuthHandshake = { type: 'auth-handshake', did: this.options.did, token };
     ws.send(JSON.stringify(frame));
   }
 
@@ -140,11 +84,11 @@ export class SignalingClient {
       set = new Set();
       this.handlers[type] = set;
     }
-    set.add(handler as HandlerFor<SignalingMessageType>);
+    set.add(handler as unknown as HandlerFor<SignalingMessageType>);
   }
 
   off<T extends SignalingMessageType>(type: T, handler: HandlerFor<T>): void {
-    this.handlers[type]?.delete(handler as HandlerFor<SignalingMessageType>);
+    this.handlers[type]?.delete(handler as unknown as HandlerFor<SignalingMessageType>);
   }
 
   send(message: SignalingMessage): void {

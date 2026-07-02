@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SignalingClient } from './signaling-client';
+import {
+  AuthHandshake,
+  PresenceBroadcast,
+  JoinRequest,
+  SdpOffer,
+  SdpAnswer,
+  IceCandidate,
+  ErrorMessage,
+} from '@blue-call/shared';
 
 /**
  * Contract under test (U19 → implemented in U20, client/src/signaling-client.ts):
@@ -19,12 +28,13 @@ import { SignalingClient } from './signaling-client';
  *   .disconnect(): void     — close intentionally; must NOT trigger reconnects
  *
  * Wire protocol: JSON frames discriminated by a `type` field using the pinned
- * names from @blue-call/shared (shared/src/protocol.ts): AuthHandshake,
- * PresenceBroadcast, JoinRequest, SdpOffer, SdpAnswer, IceCandidate,
- * ErrorMessage.
+ * kebab-case discriminants from @blue-call/shared (shared/src/protocol.ts):
+ * auth-handshake, presence-broadcast, join-request, sdp-offer, sdp-answer,
+ * ice-candidate, error. Fixtures below are parsed through the shared zod
+ * schemas so drift between this test and the protocol fails loudly.
  *
  * Handshake: the FIRST frame sent after the socket opens is
- *   { type: 'AuthHandshake', did, token }
+ *   { type: 'auth-handshake', did, token }
  * with a token freshly obtained from getToken() for every (re)connection —
  * service-auth JWTs are short-lived, so a cached token must not be reused.
  *
@@ -152,7 +162,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('connection and AuthHandshake', () => {
+describe('connection and auth-handshake', () => {
   it('opens a WebSocket to the configured URL on connect()', () => {
     const { client } = makeClient();
     client.connect();
@@ -160,12 +170,13 @@ describe('connection and AuthHandshake', () => {
     expect(instances()[0].url).toBe('ws://localhost:8787/signaling');
   });
 
-  it('sends AuthHandshake with did and token as the first frame after open', async () => {
+  it('sends auth-handshake with did and token as the first frame after open', async () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
     expect(ws.sent.length).toBeGreaterThanOrEqual(1);
-    expect(JSON.parse(ws.sent[0])).toMatchObject({
-      type: 'AuthHandshake',
+    const frame = AuthHandshake.parse(JSON.parse(ws.sent[0]));
+    expect(frame).toMatchObject({
+      type: 'auth-handshake',
       did: 'did:plc:alice',
       token: 'service-auth-jwt',
     });
@@ -180,16 +191,23 @@ describe('connection and AuthHandshake', () => {
 });
 
 describe('typed receive', () => {
-  it('dispatches an inbound PresenceBroadcast to its registered listener', async () => {
+  it('dispatches an inbound presence-broadcast to its registered listener', async () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
     const onPresence = vi.fn();
-    client.on('PresenceBroadcast', onPresence);
-    ws.message({ type: 'PresenceBroadcast', did: 'did:plc:bob', open: true, expiresAt: 1782999999 });
+    client.on('presence-broadcast', onPresence);
+    const fixture = PresenceBroadcast.parse({
+      type: 'presence-broadcast',
+      open: [{ did: 'did:plc:bob', expiresAt: 1782999999 }],
+    });
+    ws.message(fixture);
     await flush();
     expect(onPresence).toHaveBeenCalledTimes(1);
     expect(onPresence).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'PresenceBroadcast', did: 'did:plc:bob' }),
+      expect.objectContaining({
+        type: 'presence-broadcast',
+        open: expect.arrayContaining([expect.objectContaining({ did: 'did:plc:bob' })]),
+      }),
     );
   });
 
@@ -198,13 +216,13 @@ describe('typed receive', () => {
     const ws = await connectAndOpen(client);
     const onPresence = vi.fn();
     const onOffer = vi.fn();
-    client.on('PresenceBroadcast', onPresence);
-    client.on('SdpOffer', onOffer);
-    ws.message({ type: 'PresenceBroadcast', did: 'did:plc:bob', open: false });
+    client.on('presence-broadcast', onPresence);
+    client.on('sdp-offer', onOffer);
+    ws.message(PresenceBroadcast.parse({ type: 'presence-broadcast', open: [] }));
     await flush();
     expect(onPresence).toHaveBeenCalledTimes(1);
     expect(onOffer).not.toHaveBeenCalled();
-    ws.message({ type: 'SdpOffer', from: 'did:plc:bob', to: 'did:plc:alice', sdp: 'v=0...' });
+    ws.message(SdpOffer.parse({ type: 'sdp-offer', to: 'did:plc:alice', from: 'did:plc:bob', sdp: 'v=0...' }));
     await flush();
     expect(onOffer).toHaveBeenCalledTimes(1);
     expect(onPresence).toHaveBeenCalledTimes(1);
@@ -214,52 +232,50 @@ describe('typed receive', () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
     const onPresence = vi.fn();
-    client.on('PresenceBroadcast', onPresence);
-    client.off('PresenceBroadcast', onPresence);
-    ws.message({ type: 'PresenceBroadcast', did: 'did:plc:bob', open: true });
+    client.on('presence-broadcast', onPresence);
+    client.off('presence-broadcast', onPresence);
+    ws.message(
+      PresenceBroadcast.parse({ type: 'presence-broadcast', open: [{ did: 'did:plc:bob', expiresAt: 1782999999 }] }),
+    );
     await flush();
     expect(onPresence).not.toHaveBeenCalled();
   });
 
-  it('dispatches inbound ErrorMessage frames to the ErrorMessage listener', async () => {
+  it('dispatches inbound error frames to the error listener', async () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
     const onError = vi.fn();
-    client.on('ErrorMessage', onError);
-    ws.message({ type: 'ErrorMessage', code: 'unauthorized', message: 'bad service-auth token' });
+    client.on('error', onError);
+    ws.message(ErrorMessage.parse({ type: 'error', code: 'unauthorized', message: 'bad service-auth token' }));
     await flush();
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'ErrorMessage', code: 'unauthorized' }),
-    );
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', code: 'unauthorized' }));
   });
 });
 
 describe('typed send', () => {
-  it('send() serializes a JoinRequest to the socket as JSON', async () => {
+  it('send() serializes a join-request to the socket as JSON', async () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
-    client.send({ type: 'JoinRequest', from: 'did:plc:alice', to: 'did:plc:bob' });
+    client.send(JoinRequest.parse({ type: 'join-request', to: 'did:plc:bob' }));
     const frames = ws.sent.map((raw) => JSON.parse(raw));
     expect(frames[frames.length - 1]).toMatchObject({
-      type: 'JoinRequest',
-      from: 'did:plc:alice',
+      type: 'join-request',
       to: 'did:plc:bob',
     });
   });
 
-  it('send() serializes SdpOffer, SdpAnswer, and IceCandidate frames', async () => {
+  it('send() serializes sdp-offer, sdp-answer, and ice-candidate frames', async () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
     const outbound = [
-      { type: 'SdpOffer', from: 'did:plc:alice', to: 'did:plc:bob', sdp: 'v=0 offer' },
-      { type: 'SdpAnswer', from: 'did:plc:alice', to: 'did:plc:bob', sdp: 'v=0 answer' },
-      {
-        type: 'IceCandidate',
-        from: 'did:plc:alice',
+      SdpOffer.parse({ type: 'sdp-offer', to: 'did:plc:bob', sdp: 'v=0 offer' }),
+      SdpAnswer.parse({ type: 'sdp-answer', to: 'did:plc:bob', sdp: 'v=0 answer' }),
+      IceCandidate.parse({
+        type: 'ice-candidate',
         to: 'did:plc:bob',
         candidate: { candidate: 'candidate:1 1 udp 2122260223 192.168.1.2 50000 typ host', sdpMid: '0' },
-      },
+      }),
     ];
     for (const msg of outbound) client.send(msg);
     const frames = ws.sent.map((raw) => JSON.parse(raw));
@@ -274,12 +290,14 @@ describe('malformed inbound frames', () => {
     const { client } = makeClient();
     const ws = await connectAndOpen(client);
     const onPresence = vi.fn();
-    client.on('PresenceBroadcast', onPresence);
+    client.on('presence-broadcast', onPresence);
     expect(() => ws.message('this is not json {{{')).not.toThrow();
     await flush();
     expect(onPresence).not.toHaveBeenCalled();
     // the client must survive the bad frame — later valid frames still dispatch
-    ws.message({ type: 'PresenceBroadcast', did: 'did:plc:bob', open: true });
+    ws.message(
+      PresenceBroadcast.parse({ type: 'presence-broadcast', open: [{ did: 'did:plc:bob', expiresAt: 1782999999 }] }),
+    );
     await flush();
     expect(onPresence).toHaveBeenCalledTimes(1);
   });
@@ -289,8 +307,8 @@ describe('malformed inbound frames', () => {
     const ws = await connectAndOpen(client);
     const onPresence = vi.fn();
     const onError = vi.fn();
-    client.on('PresenceBroadcast', onPresence);
-    client.on('ErrorMessage', onError);
+    client.on('presence-broadcast', onPresence);
+    client.on('error', onError);
     expect(() => ws.message({ type: 'TotallyBogusType', payload: 1 })).not.toThrow();
     expect(() => ws.message({ hello: 'world' })).not.toThrow();
     expect(() => ws.message('42')).not.toThrow();
@@ -321,7 +339,7 @@ describe('reconnect with backoff', () => {
     const second = lastSocket();
     second.open();
     await vi.advanceTimersByTimeAsync(0);
-    expect(JSON.parse(second.sent[0])).toMatchObject({ type: 'AuthHandshake', token: 'token-2' });
+    expect(JSON.parse(second.sent[0])).toMatchObject({ type: 'auth-handshake', token: 'token-2' });
     expect(getToken).toHaveBeenCalledTimes(2);
   });
 
@@ -410,34 +428,37 @@ describe('integration: full signaling lifecycle', () => {
     const ws = await connectAndOpen(client);
 
     // 1. handshake was the first frame
-    expect(JSON.parse(ws.sent[0])).toMatchObject({ type: 'AuthHandshake', did: 'did:plc:alice' });
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ type: 'auth-handshake', did: 'did:plc:alice' });
 
     // 2. presence arrives for a mutual
     const onPresence = vi.fn();
     const onAnswer = vi.fn();
     const onIce = vi.fn();
-    client.on('PresenceBroadcast', onPresence);
-    client.on('SdpAnswer', onAnswer);
-    client.on('IceCandidate', onIce);
-    ws.message({ type: 'PresenceBroadcast', did: 'did:plc:bob', open: true, expiresAt: 1783000000 });
+    client.on('presence-broadcast', onPresence);
+    client.on('sdp-answer', onAnswer);
+    client.on('ice-candidate', onIce);
+    ws.message(
+      PresenceBroadcast.parse({ type: 'presence-broadcast', open: [{ did: 'did:plc:bob', expiresAt: 1783000000 }] }),
+    );
     await flush();
     expect(onPresence).toHaveBeenCalledTimes(1);
 
-    // 3. caller initiates: JoinRequest then SdpOffer go out
-    client.send({ type: 'JoinRequest', from: 'did:plc:alice', to: 'did:plc:bob' });
-    client.send({ type: 'SdpOffer', from: 'did:plc:alice', to: 'did:plc:bob', sdp: 'v=0 offer' });
+    // 3. caller initiates: join-request then sdp-offer go out
+    client.send(JoinRequest.parse({ type: 'join-request', to: 'did:plc:bob' }));
+    client.send(SdpOffer.parse({ type: 'sdp-offer', to: 'did:plc:bob', sdp: 'v=0 offer' }));
     const outbound = ws.sent.map((raw) => JSON.parse(raw));
-    expect(outbound).toContainEqual(expect.objectContaining({ type: 'JoinRequest' }));
-    expect(outbound).toContainEqual(expect.objectContaining({ type: 'SdpOffer' }));
+    expect(outbound).toContainEqual(expect.objectContaining({ type: 'join-request' }));
+    expect(outbound).toContainEqual(expect.objectContaining({ type: 'sdp-offer' }));
 
     // 4. answer + ICE flow back in
-    ws.message({ type: 'SdpAnswer', from: 'did:plc:bob', to: 'did:plc:alice', sdp: 'v=0 answer' });
-    ws.message({
-      type: 'IceCandidate',
-      from: 'did:plc:bob',
-      to: 'did:plc:alice',
-      candidate: { candidate: 'candidate:2 1 udp 1686052607 203.0.113.5 61000 typ srflx', sdpMid: '0' },
-    });
+    ws.message(SdpAnswer.parse({ type: 'sdp-answer', to: 'did:plc:alice', sdp: 'v=0 answer' }));
+    ws.message(
+      IceCandidate.parse({
+        type: 'ice-candidate',
+        to: 'did:plc:alice',
+        candidate: { candidate: 'candidate:2 1 udp 1686052607 203.0.113.5 61000 typ srflx', sdpMid: '0' },
+      }),
+    );
     await flush();
     expect(onAnswer).toHaveBeenCalledTimes(1);
     expect(onIce).toHaveBeenCalledTimes(1);
