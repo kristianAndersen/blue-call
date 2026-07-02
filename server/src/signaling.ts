@@ -28,7 +28,14 @@ export interface SignalingRouter {
 export function createSignalingRouter(options: SignalingRouterOptions): SignalingRouter {
   const { presence } = options;
   const verifyAuth = options.verifyAuth ?? defaultVerifyAuth;
-  const devBypass = process.env.DEV_ALLOW_UNVERIFIED_AUTH === '1';
+  const devBypassFlagSet = process.env.DEV_ALLOW_UNVERIFIED_AUTH === '1';
+  const isDevEnv = process.env.NODE_ENV === 'development';
+  if (devBypassFlagSet && !isDevEnv) {
+    throw new Error(
+      'refusing to start: DEV_ALLOW_UNVERIFIED_AUTH is set outside NODE_ENV=development',
+    );
+  }
+  const devBypass = devBypassFlagSet && isDevEnv;
   if (devBypass) {
     console.warn('DEV MODE: signaling auth disabled');
   }

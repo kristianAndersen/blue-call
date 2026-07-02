@@ -488,19 +488,25 @@ describe('signaling router: structural memorylessness (no content/metadata loggi
 
 describe('signaling router: DEV_ALLOW_UNVERIFIED_AUTH bypass', () => {
   const ENV_KEY = 'DEV_ALLOW_UNVERIFIED_AUTH';
+  const NODE_ENV_KEY = 'NODE_ENV';
   let originalEnv: string | undefined;
+  let originalNodeEnv: string | undefined;
 
   beforeEach(() => {
     originalEnv = process.env[ENV_KEY];
+    originalNodeEnv = process.env[NODE_ENV_KEY];
   });
 
   afterEach(() => {
     if (originalEnv === undefined) delete process.env[ENV_KEY];
     else process.env[ENV_KEY] = originalEnv;
+    if (originalNodeEnv === undefined) delete process.env[NODE_ENV_KEY];
+    else process.env[NODE_ENV_KEY] = originalNodeEnv;
   });
 
-  test('with the env flag set, a handshake whose token verification fails trusts the claimed DID', async () => {
+  test('with the flag set and NODE_ENV=development, a handshake whose token verification fails trusts the claimed DID', async () => {
     process.env[ENV_KEY] = '1';
+    process.env[NODE_ENV_KEY] = 'development';
     const { router } = makeRouter();
     const conn = new MockConn();
     router.handleOpen(conn);
@@ -513,8 +519,9 @@ describe('signaling router: DEV_ALLOW_UNVERIFIED_AUTH bypass', () => {
     expect(router.connectionCount()).toBe(1);
   });
 
-  test('with the env flag set, exactly one console.warn fires at router creation, never per-connection', async () => {
+  test('with the flag set and NODE_ENV=development, exactly one console.warn fires at router creation, never per-connection', async () => {
     process.env[ENV_KEY] = '1';
+    process.env[NODE_ENV_KEY] = 'development';
     const warnCalls: unknown[][] = [];
     const original = console.warn;
     console.warn = (...args: unknown[]) => warnCalls.push(args);
@@ -529,8 +536,25 @@ describe('signaling router: DEV_ALLOW_UNVERIFIED_AUTH bypass', () => {
     expect(String(warnCalls[0]![0])).toContain('DEV MODE: signaling auth disabled');
   });
 
-  test('without the env flag, a handshake with a failing token is rejected exactly as before', async () => {
+  test('with the flag set but NODE_ENV unset, router creation throws and refuses to boot', () => {
+    process.env[ENV_KEY] = '1';
+    delete process.env[NODE_ENV_KEY];
+    expect(() => makeRouter()).toThrow(
+      'refusing to start: DEV_ALLOW_UNVERIFIED_AUTH is set outside NODE_ENV=development',
+    );
+  });
+
+  test('with the flag set but NODE_ENV=production, router creation throws and refuses to boot', () => {
+    process.env[ENV_KEY] = '1';
+    process.env[NODE_ENV_KEY] = 'production';
+    expect(() => makeRouter()).toThrow(
+      'refusing to start: DEV_ALLOW_UNVERIFIED_AUTH is set outside NODE_ENV=development',
+    );
+  });
+
+  test('without the env flag, a handshake with a failing token is rejected exactly as before, regardless of NODE_ENV', async () => {
     delete process.env[ENV_KEY];
+    delete process.env[NODE_ENV_KEY];
     const { router } = makeRouter();
     const conn = new MockConn();
     router.handleOpen(conn);
