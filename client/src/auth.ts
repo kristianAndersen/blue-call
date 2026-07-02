@@ -46,8 +46,9 @@ export async function login(handle: string): Promise<void> {
   if (!handle) {
     throw new Error('login requires a non-empty handle');
   }
+  const normalizedHandle = handle.trim().replace(/^@/, '');
   const client = await getClient();
-  await client.signIn(handle);
+  await client.signIn(normalizedHandle);
 }
 
 export async function handleCallback(): Promise<void> {

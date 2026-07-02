@@ -144,6 +144,33 @@ describe('login(handle)', () => {
     await expect((async () => auth.login(''))()).rejects.toThrow();
     expect(signInCalls()).toHaveLength(0);
   });
+
+  it('strips a leading @ from a user-typed handle before signing in', async () => {
+    const auth = await loadAuth();
+    await auth.login('@krille.bsky.social');
+
+    const calls = signInCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('krille.bsky.social');
+  });
+
+  it('trims surrounding whitespace from a user-typed handle before signing in', async () => {
+    const auth = await loadAuth();
+    await auth.login('  krille.bsky.social ');
+
+    const calls = signInCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('krille.bsky.social');
+  });
+
+  it('strips a leading @ and trims whitespace together', async () => {
+    const auth = await loadAuth();
+    await auth.login('@krille.bsky.social ');
+
+    const calls = signInCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('krille.bsky.social');
+  });
 });
 
 describe('handleCallback()', () => {
