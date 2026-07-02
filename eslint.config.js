@@ -15,7 +15,33 @@ export default tseslint.config(
         console: 'readonly',
         process: 'readonly',
         document: 'readonly',
+        window: 'readonly',
+        SubmitEvent: 'readonly',
+        URLSearchParams: 'readonly',
+        MediaStream: 'readonly',
+        HTMLVideoElement: 'readonly',
       },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
+  {
+    files: ['**/*.svelte'],
+    languageOptions: {
+      parserOptions: {
+        parser: tseslint.parser,
+      },
+    },
+  },
+  {
+    files: ['**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
     },
   },
 );
