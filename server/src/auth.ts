@@ -6,11 +6,12 @@ const idResolver = new IdResolver();
 export async function verifyClientAuth(
   jwtStr: string,
   serverDid: string,
+  lxm: string | null = null,
 ): Promise<{ did: string }> {
   const payload = await verifyJwt(
     jwtStr,
     serverDid,
-    null,
+    lxm,
     (iss: string, forceRefresh: boolean) =>
       idResolver.did.resolveAtprotoKey(iss, forceRefresh),
   );

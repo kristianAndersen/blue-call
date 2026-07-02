@@ -4,7 +4,8 @@ import type { PresenceStore } from './presence';
 
 async function defaultVerifyAuth(token: string): Promise<{ did: string }> {
   const { verifyClientAuth } = await import('./auth');
-  return verifyClientAuth(token, process.env.SIGNALING_SERVER_DID ?? '');
+  const lxm = process.env.SIGNALING_LXM ?? 'com.bluecall.signaling.connect';
+  return verifyClientAuth(token, process.env.SIGNALING_SERVER_DID ?? '', lxm);
 }
 
 export interface SignalingConnection {

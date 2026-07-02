@@ -3,7 +3,7 @@
   "client_name": "Blue Call",
   "client_uri": "http://localhost",
   "redirect_uris": ["http://localhost/"],
-  "scope": "atproto transition:generic",
+  "scope": "atproto transition:generic rpc:com.bluecall.signaling.connect?aud=did:web:127.0.0.1%3A5173",
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
   "application_type": "web",

@@ -1,6 +1,7 @@
 import { BrowserOAuthClient, buildLoopbackClientId, type OAuthSession } from '@atproto/oauth-client-browser';
 
 const HANDLE_RESOLVER = 'https://bsky.social';
+const SIGNALING_LXM = 'com.bluecall.signaling.connect';
 
 export type Session = {
   did: string;
@@ -64,7 +65,7 @@ export async function getSession(): Promise<Session | null> {
     did: session.did,
     mintServiceAuth: async (aud: string): Promise<string> => {
       const res = await session.fetchHandler(
-        `/xrpc/com.atproto.server.getServiceAuth?aud=${encodeURIComponent(aud)}`,
+        `/xrpc/com.atproto.server.getServiceAuth?aud=${encodeURIComponent(aud)}&lxm=${encodeURIComponent(SIGNALING_LXM)}`,
       );
       if (!res.ok) {
         if (import.meta.env.DEV) {

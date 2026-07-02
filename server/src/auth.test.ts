@@ -47,15 +47,17 @@ function mintToken(opts: {
   aud?: string;
   exp?: number;
   sig?: string;
+  lxm?: string | null;
 }): string {
   const {
     iss = CLIENT_DID,
     aud = SERVER_DID,
     exp = Math.floor(Date.now() / 1000) + 300,
     sig = `sig:${CLIENT_SIGNING_KEY}`,
+    lxm = null,
   } = opts;
   const header = b64u({ typ: 'JWT', alg: 'ES256K' });
-  const payload = b64u({ iss, aud, exp, lxm: null });
+  const payload = b64u({ iss, aud, exp, lxm });
   return `${header}.${payload}.${sig}`;
 }
 
@@ -65,14 +67,14 @@ const verifyJwtMock = mock(
   async (
     jwtStr: string,
     ownDid: string | null,
-    _lxm: string | null,
+    lxm: string | null,
     getSigningKey: (iss: string, forceRefresh: boolean) => Promise<string>,
   ) => {
     const parts = jwtStr.split('.');
     if (parts.length !== 3) {
       throw new FakeAuthRequiredError('poorly formatted jwt');
     }
-    let payload: { iss: string; aud: string; exp: number };
+    let payload: { iss: string; aud: string; exp: number; lxm?: string | null };
     try {
       payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
     } catch {
@@ -90,6 +92,9 @@ const verifyJwtMock = mock(
     }
     if (ownDid !== null && payload.aud !== ownDid) {
       throw new FakeAuthRequiredError('jwt audience does not match service did');
+    }
+    if (lxm !== null && payload.lxm !== lxm) {
+      throw new FakeAuthRequiredError('jwt method does not match required lxm');
     }
     const signingKey = await getSigningKey(payload.iss, false);
     if (parts[2] !== `sig:${signingKey}`) {
@@ -157,6 +162,33 @@ describe('verifyClientAuth — valid token', () => {
     const token = mintToken({ iss: `${CLIENT_DID}#atproto` });
     const result = await verifyClientAuth(token, SERVER_DID);
     expect(result.did).toBe(CLIENT_DID);
+  });
+});
+
+describe('verifyClientAuth — lxm enforcement', () => {
+  const LXM = 'com.bluecall.signaling.connect';
+
+  test('passes the given lxm through to verifyJwt', async () => {
+    await verifyClientAuth(mintToken({ lxm: LXM }), SERVER_DID, LXM);
+    expect(verifyJwtMock).toHaveBeenCalledTimes(1);
+    const [, , lxmArg] = verifyJwtMock.mock.calls[0]!;
+    expect(lxmArg).toBe(LXM);
+  });
+
+  test('accepts a token whose lxm matches the expected lxm', async () => {
+    const result = await verifyClientAuth(mintToken({ lxm: LXM }), SERVER_DID, LXM);
+    expect(result.did).toBe(CLIENT_DID);
+  });
+
+  test('rejects a token minted for a different lxm', async () => {
+    const token = mintToken({ lxm: 'com.other.thing' });
+    await expect(verifyClientAuth(token, SERVER_DID, LXM)).rejects.toThrow();
+  });
+
+  test('defaults to an unbound (null) lxm check when no lxm is passed, preserving old behavior', async () => {
+    await verifyClientAuth(mintToken({}), SERVER_DID);
+    const [, , lxmArg] = verifyJwtMock.mock.calls[0]!;
+    expect(lxmArg).toBe(null);
   });
 });
 

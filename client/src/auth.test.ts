@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const ALICE_DID = 'did:plc:alice1234abcdefgh';
 const ALICE_HANDLE = 'alice.bsky.social';
 const SERVICE_TOKEN = 'mock-service-auth-jwt';
+const SIGNALING_LXM = 'com.bluecall.signaling.connect';
 
 const { mockClient, mockSession } = vi.hoisted(() => {
   const mockSession = {
@@ -237,6 +238,18 @@ describe('getSession()', () => {
     expect(requests[0]).toContain('did:web:first.example.com');
     expect(requests[0]).not.toContain('did:web:second.example.com');
     expect(requests[1]).toContain('did:web:second.example.com');
+  });
+
+  it('mintServiceAuth requests the lxm-bound rpc scope so the PDS does not 403', async () => {
+    primeLoggedIn();
+    const auth = await loadAuth();
+    await auth.handleCallback();
+    const session = await auth.getSession();
+
+    await session!.mintServiceAuth('did:web:signaling.example.com');
+
+    const requests = serviceAuthRequests();
+    expect(requests[0]).toContain(`lxm=${SIGNALING_LXM}`);
   });
 
   it('mintServiceAuth rejects when the PDS request fails', async () => {
